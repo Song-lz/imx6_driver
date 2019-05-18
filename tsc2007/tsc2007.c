@@ -38,10 +38,12 @@
 #define READ_X		(ADC_ON_12BIT | TSC2007_MEASURE_X)
 #define PWRDOWN		(TSC2007_12BIT | TSC2007_POWER_OFF_IRQ_EN)
 
+/* tsc2007原始数据 */
 struct ts_event {
 	u16	x;
 	u16	y;
-	u16	z1, z2;
+	u16	z1;
+	u16 z2;
 };
 
 struct tsc2007 {
@@ -60,9 +62,9 @@ struct tsc2007 {
 	wait_queue_head_t	wait;
 	bool				stopped;
 	int	(*get_pendown_state)(struct device *);
-	void (*clear_penirq)(void);
 };
 
+/* i2c传输数据 */
 static inline int tsc2007_xfer(struct tsc2007 *tsc, u8 cmd)
 {
 	s32 data;
@@ -75,6 +77,7 @@ static inline int tsc2007_xfer(struct tsc2007 *tsc, u8 cmd)
 	return val;
 }
 
+/* 从tsc2007中读取数据坐标 */
 static void tsc2007_read_values(struct tsc2007 *tsc, struct ts_event *tc)
 {
 	tc->y = tsc2007_xfer(tsc, READ_Y);
@@ -84,9 +87,10 @@ static void tsc2007_read_values(struct tsc2007 *tsc, struct ts_event *tc)
 	tsc2007_xfer(tsc, PWRDOWN);
 }
 
+/* 计算压力 */
 static u32 tsc2007_calculate_pressure(struct tsc2007 *tsc, struct ts_event *tc)
 {
-	u32 rt;
+	u32 rt = 0;
 	if (tc->x == MAX_12BIT)
 		tc->x = 0;
 
@@ -100,14 +104,18 @@ static u32 tsc2007_calculate_pressure(struct tsc2007 *tsc, struct ts_event *tc)
 	return rt;
 }
 
+/* 获取触屏按下状态 */
 static bool tsc2007_is_pen_down(struct tsc2007 *ts)
 {
+	/* 没有此函数，函数指针为空,返回true */
 	if(!ts->get_pendown_state)
 		return true;
 	else
+		/* 获取按下状态 */
 		return ts->get_pendown_state(&ts->client->dev);
 }
 
+/* 软中断 */
 static irqreturn_t tsc2007_soft_irq(int irq, void *handler)
 {
 	struct tsc2007 *ts = handler;
@@ -115,8 +123,11 @@ static irqreturn_t tsc2007_soft_irq(int irq, void *handler)
 	struct ts_event tc;
 	u32 rt;
 
+	/* 未stop且按下 ，如果一直按下会在这里循环*/
 	while (!ts->stopped && tsc2007_is_pen_down(ts)) {
+		/* 读取tsc2007原始数据 */
 		tsc2007_read_values(ts, &tc);
+		/* 计算压力 */
 		rt = tsc2007_calculate_pressure(ts, &tc);
 		if (!rt && !ts->get_pendown_state)
 			break;
@@ -127,49 +138,52 @@ static irqreturn_t tsc2007_soft_irq(int irq, void *handler)
 			input_report_abs(input, ABS_PRESSURE, rt);
 			input_sync(input);
 		}
+		/* 等待一段时 */
 		wait_event_timeout(ts->wait, ts->stopped, ts->poll_period);
 	}
 	input_report_key(input, BTN_TOUCH, 0);
 	input_report_abs(input, ABS_PRESSURE, 0);
 	input_sync(input);
 
-	if (ts->clear_penirq)
-		ts->clear_penirq();
-
 	return IRQ_HANDLED;
 }
 
+/* 硬中断 */
 static  irqreturn_t tsc2007_hard_irq(int irq, void *handle)
 {
 	struct tsc2007 *ts = handle;
+	/* 按下 */
 	if (tsc2007_is_pen_down(ts))
 		return IRQ_WAKE_THREAD;
-
-	if (ts->clear_penirq)
-		ts->clear_penirq();
 
 	return IRQ_HANDLED;
 }
 
+/* stop函数 */
 static void tsc2007_stop(struct tsc2007 *ts)
 {
+	/* 标记为停止状态 */
 	ts->stopped = true;
 	mb();
 	wake_up(&ts->wait);
-
+	/* 关闭外部中断 */
 	disable_irq(ts->irq);
 }
 
+/* open函数 */
 static int tsc2007_open(struct input_dev *input_dev)
 {
 	struct tsc2007 *ts = input_get_drvdata(input_dev);
 	int err;
 
+	/* 标记为启动状态 */
 	ts->stopped = false;
 	mb();
 
+	/* 开启外部中断 */
 	enable_irq(ts->irq);
 
+	/* 使tsc2007掉电，并开启中断 */
 	err = tsc2007_xfer(ts, PWRDOWN);
 	if (err < 0) {
 		tsc2007_stop(ts);
@@ -178,6 +192,7 @@ static int tsc2007_open(struct input_dev *input_dev)
 	return 0;
 }
 
+/* close函数 */
 static void tsc2007_close(struct input_dev *input_dev)
 {
 	struct tsc2007 *ts = input_get_drvdata(input_dev);
@@ -191,6 +206,7 @@ static int  tsc2007_get_pendown_state_gpio(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct tsc2007 *ts = i2c_get_clientdata(client);
 
+	/* 按下返回1 */
 	return !gpio_get_value(ts->gpio);
 }
 
@@ -227,7 +243,8 @@ static int tsc2007_probe_dt(struct i2c_client *client, struct tsc2007 *ts)
 		ts->x_plate_ohms = val32;
 	else
 		return -EINVAL;
-	
+
+	/* 获取GPIO */
 	ts->gpio = of_get_gpio(np, 0);
 	if (gpio_is_valid(ts->gpio))
 		ts->get_pendown_state = tsc2007_get_pendown_state_gpio;
@@ -235,12 +252,10 @@ static int tsc2007_probe_dt(struct i2c_client *client, struct tsc2007 *ts)
 	return 0;
 }
 
-
 /* probe function */
 static int tsc2007_probe(struct i2c_client *client, 
 			const struct i2c_device_id *id)
 {
-	const struct tsc2007_platform_data *pdata = dev_get_platdata(&client->dev);
 	struct tsc2007 *ts;
 	struct input_dev *input_dev;
 	int err;
@@ -249,6 +264,7 @@ static int tsc2007_probe(struct i2c_client *client,
 	ts = devm_kzalloc(&client->dev, sizeof(struct tsc2007), GFP_KERNEL);
 	if (!ts)
 		return -ENOMEM;
+	/* 使用设备树属性配置ts */
 	err = tsc2007_probe_dt(client, ts);
 	if (err)
 		return err;
@@ -327,7 +343,7 @@ static struct i2c_driver tsc2007_driver = {
 	},
 	.id_table	= tsc2007_idtable,
 	.probe		= tsc2007_probe,
-	.remove	= tsc2007_remove,
+	.remove 	= tsc2007_remove,
 };
 
 module_i2c_driver(tsc2007_driver);
