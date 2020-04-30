@@ -1,6 +1,6 @@
 #!/bin/sh
 export ARCH=arm
-export CROSS_COMPILE=arm-fsl-linux-gnueabi-
+export CROSS_COMPILE=arm-linux-gnueabihf-
 
 obj-m := timer.o
 KDIR ?=/home/eurphan/learn/imx6ul/kernel/linux-2.6-imx-rel_imx_4.1.15_1.2.0_ga 

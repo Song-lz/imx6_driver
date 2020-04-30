@@ -23,8 +23,8 @@ struct timer_dev {
 	struct cdev cdev;			/* cdev */
 	int major;					/* 主设备号 */
 	int minor;					/* 次设备号 */
-	struct timer_list timer;
-	int timer_period;
+	struct timer_list timer;	/* 定时器 */
+	int timer_period;			/* 定时器回调周期 */
 };
 
 struct timer_dev timer_device;		/* timer设备 */
@@ -115,7 +115,7 @@ static __init int timer_init(void)
 	cdev_add(&timer_device.cdev, timer_device.devid, 1);
 
 	/* 4.初始化并启动一个timer */
-	timer_device.timer_period = 1000;
+	timer_device.timer_period = 1 * HZ;
 	init_timer(&timer_device.timer);
 	timer_device.timer.function = timer_calback;
 	timer_device.timer.data = (unsigned long)&timer_device;
